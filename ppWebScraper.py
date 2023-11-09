@@ -1,66 +1,81 @@
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
+from selenium.common.exceptions import NoSuchElementException
 import undetected_chromedriver as uc
-
 import time
 import pandas as pd
 
-############################################################################
+def scrape_players(sport):
+    players_list = []
+    try:
+        driver.find_element(By.XPATH, f"//div[@class='name'][normalize-space()='{sport}']").click()
+        time.sleep(0.1)
 
-driver = uc.Chrome()
+        stat_container = WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CLASS_NAME, "stat-container")))
+        categories = driver.find_element(By.CSS_SELECTOR, ".stat-container").text.split('\n')
 
-###########################################################################
+        for category in categories:
+            try:
+                driver.find_element(By.XPATH, f"//div[text()='{category}']").click()
+                projectionsPP = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".projection")))
 
-#   THIS SOFTWARE IS ONLY FOR PERSONAL USE, COMMERCIAL USE IS NOT ALLOWED
+                for projections in projectionsPP:
+                    names = projections.find_element(By.CLASS_NAME, "name").text
+                    value = projections.find_element(By.CLASS_NAME, "presale-score").get_attribute('innerHTML')
+                    proptype = projections.find_element(By.CLASS_NAME, "text").get_attribute('innerHTML')
 
-# Scraping PrizePicks
+                    player_data = {
+                        'Name': names,
+                        'Value': value,
+                        'Prop': proptype.replace("<wbr>", "")
+                    }
+                    players_list.append(player_data)
+            except NoSuchElementException:
+                print(f"Category '{category}' not found for {sport}. Skipping...")
+    except NoSuchElementException:
+        print(f"{sport} section not found. Skipping...")
+        return None  # Return None if sport not found
+
+    return players_list
+
+def scrape_sports(*sports):
+    all_players = {}
+    for sport in sports:
+        players = scrape_players(sport)
+        if players is not None:  # Only create CSV if players are found
+            all_players[sport] = players
+    return all_players
+
+# ... (rest of your code remains the same)
+
+
+
+options = uc.ChromeOptions()
+prefs = {"profile.default_content_settings.geolocation": 2}
+options.add_experimental_option("prefs", prefs)
+options.add_argument("--deny-permission-prompts")
+driver = uc.Chrome(options=options)
+
 driver.get("https://app.prizepicks.com/")
-time.sleep(3)
+time.sleep(0.1)
 
-# Waiting and closes popup
-WebDriverWait(driver, 15).until(EC.presence_of_all_elements_located((By.CLASS_NAME, "close")))
-time.sleep(3)
-driver.find_element(By.XPATH, "/html/body/div[2]/div[3]/div/div/div[3]/button").click()
-time.sleep(3)
+try:
+    close_button = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CLASS_NAME, "close")))
+    close_button.click()
+except NoSuchElementException:
+    pass
 
-# Creating tables for players
-ppPlayers = []
+sports_to_scrape = ['NBA']  # Add more sports here
 
-# CHANGE MLB TO ANY SPORT THAT YOU LIKE!!!!! IF THE SPORT IS NOT OFFERED ON PP THEN THE PROGRAM WILL RUN AN ERROR AND EXIT.
-driver.find_element(By.XPATH, "//div[@class='name'][normalize-space()='MLB']").click()
-time.sleep(5)
+all_players = scrape_sports(*sports_to_scrape)
 
-# Waits until stat container element is viewable
-stat_container = WebDriverWait(driver, 1).until(EC.visibility_of_element_located((By.CLASS_NAME, "stat-container")))
+for sport, players in all_players.items():
 
-# Finding all the stat elements within the stat-container
-categories = driver.find_element(By.CSS_SELECTOR, ".stat-container").text.split('\n')
+    df = pd.DataFrame(players)
+    df.to_csv(f'{sport.lower()}_players.csv', index=False)
+    print(f"{sport} Players:")
+    print(df)
+    print('\n')
 
-# Collecting categories
-for category in categories:
-    driver.find_element(By.XPATH, f"//div[text()='{category}']").click()
-
-    projectionsPP = WebDriverWait(driver, 5).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".projection")))
-
-    for projections in projectionsPP:
-        names = projections.find_element(By.CLASS_NAME, "name").text
-        value = projections.find_element(By.CLASS_NAME, "presale-score").get_attribute('innerHTML')
-        proptype = projections.find_element(By.CLASS_NAME, "text").get_attribute('innerHTML')
-
-        players = {
-            'Name': names,
-            'Value': value,
-            'Prop': proptype.replace("<wbr>", "")
-        }
-        ppPlayers.append(players)
-
-dfProps = pd.DataFrame(ppPlayers)
-# CHANGE THE NAME OF THE FILE TO YOUR LIKING
-dfProps.to_csv('test2.csv')
-
-print("These are all of the props offered by PP.", '\n')
-print(dfProps)
-print('\n')
+driver.quit()
